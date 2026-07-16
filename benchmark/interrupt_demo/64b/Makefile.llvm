@@ -1,0 +1,42 @@
+LLVM_DIR ?= /home/vogtb/alma-riscv-llvm-build/bin
+CC      = $(LLVM_DIR)/clang
+OBJCOPY = $(LLVM_DIR)/llvm-objcopy
+OBJDUMP = $(LLVM_DIR)/llvm-objdump
+
+# clang defaults to riscv64-unknown-linux-gnu; bare-metal needs the elf triple.
+TARGET  = --target=riscv64-unknown-elf
+ARCH    = -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany
+
+SRC_DIR = ..
+LINK_DIR = ..
+O ?= $(PWD)/build
+
+CFLAGS  = $(TARGET) $(ARCH) -Wall -O0 -g
+LDFLAGS = $(TARGET) $(ARCH) -fuse-ld=lld -nostdlib -nostartfiles -T $(LINK_DIR)/link.ld
+
+OBJS = $(O)/startup.o $(O)/main.o
+
+all: $(O)/main.elf
+
+$(O):
+	mkdir -p $@
+
+$(O)/startup.o: startup.S | $(O)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(O)/main.o: $(SRC_DIR)/main.c | $(O)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(O)/main.elf: $(OBJS)
+	$(CC) $(OBJS) $(LDFLAGS) -o $@
+
+$(O)/main.dump: $(O)/main.elf
+	$(OBJDUMP) -D $< > $@
+
+$(O)/main.bin: $(O)/main.elf
+	$(OBJCOPY) -O binary $< $@
+
+clean:
+	rm -rf $(O)
+
+.PHONY: all clean
