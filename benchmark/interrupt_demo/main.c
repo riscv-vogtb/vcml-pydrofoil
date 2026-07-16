@@ -68,6 +68,37 @@ void uart_print(char *s)
         uart_putc(*s++);
 }
 
+void uart_print_long(long value)
+{
+    char buf[32];
+    int i = 0;
+    int neg = 0;
+
+    if (value == 0)
+    {
+        uart_putc('0');
+        return;
+    }
+
+    if (value < 0)
+    {
+        neg = 1;
+        value = -value;
+    }
+
+    while (value > 0)
+    {
+        buf[i++] = '0' + (value % 10);
+        value /= 10;
+    }
+
+    if (neg)
+        uart_putc('-');
+
+    while (i > 0)
+        uart_putc(buf[--i]);
+}
+
 void m_irq_handler(void)
 {
     uint32_t irq = PLIC_CLAIM(PLIC_CTX_M);
