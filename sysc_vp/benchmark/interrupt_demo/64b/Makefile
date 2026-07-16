@@ -1,8 +1,14 @@
-CC      = riscv64-unknown-elf-gcc
-OBJCOPY = riscv64-unknown-elf-objcopy
-OBJDUMP = riscv64-unknown-elf-objdump
+CC      = /home/vogtb/alma-riscv-build/bin/riscv64-unknown-elf-gcc
+OBJCOPY = /home/vogtb/alma-riscv-build/bin/riscv64-unknown-elf-objcopy
+OBJDUMP = /home/vogtb/alma-riscv-build/bin/riscv64-unknown-elf-objdump
+# CC      = /usr/bin/riscv64-unknown-elf-gcc
+# OBJCOPY = /usr/bin/riscv64-unknown-elf-objcopy
+# OBJDUMP = /usr/bin/riscv64-unknown-elf-objdump
 
-ARCH    = -march=rv64imac -mabi=lp64 -mcmodel=medany
+
+
+# ARCH    = -march=rv64imac -mabi=lp64 -mcmodel=medany
+ARCH    = -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany
 
 SRC_DIR = ..
 LINK_DIR = ..

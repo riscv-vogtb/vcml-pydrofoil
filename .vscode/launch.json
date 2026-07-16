@@ -1,0 +1,112 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SystemC VP ",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/sysc_vp/build/sysc_vp",
+      "args": [
+        "-f",
+        "benchmark/interrupt_demo/64b/interrupt_demo.cfg"
+      ],
+      "cwd": "${workspaceFolder}/sysc_vp",
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${workspaceFolder}/pypy-pydrofoil-scripting-experimental/bin"
+        }
+      ],
+    },
+    {
+      "name": "-- VP Debug (gdb)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/sysc_vp/build/sysc_vp",
+      "args": [
+        "-f",
+        "benchmark/riscv64_ex.cfg"
+      ],
+      "cwd": "${workspaceFolder}/sysc_vp",
+      "MIMode": "gdb",
+      "stopAtEntry": true,
+      "environment": [
+        {
+          "name": "PYDROFOIL_BIN_DIR",
+          "value": "${workspaceFolder}/../pypy-pydrofoil-scripting-experimental/bin"
+        },
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${workspaceFolder}/pypy-pydrofoil-scripting-experimental/bin"
+        }
+      ]
+    },
+    {
+      "name": "-- (gdb) Attach",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "${workspaceFolder}/sysc_vp/benchmark/interrupt_demo/64b/main.o",
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Set Disassembly Flavor to Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "-- Attach to interrupt demo",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "${workspaceFolder}/sysc_vp/build/sysc_vp",
+      "MIMode": "gdb",
+    },
+    {
+      "name": "VP Run RISCV",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/sysc_vp",
+      "command": "${workspaceFolder}/sysc_vp/launch.sh ${workspaceFolder}/sysc_vp/benchmark/riscv64_ex.cfg",
+    },
+    {
+      "name": "VP Run INTERRUPT",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/sysc_vp",
+      "command": "${workspaceFolder}/sysc_vp/launch.sh ${workspaceFolder}/sysc_vp/benchmark/interrupt_demo/64b/interrupt_demo.cfg",
+    },
+    {
+      "name": "Attach to Interrupt Demo GDB",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/sysc_vp/benchmark/interrupt_demo/64b/main.elf",
+      "cwd": "${workspaceFolder}/sysc_vp",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb-multiarch",
+      // "miDebuggerPath": "/home/vogtb/alma-riscv-build/bin/riscv64-unknown-elf-gdb",
+      "miDebuggerServerAddress": "localhost:5555",
+    },
+  ],
+  "compounds": [
+    {
+      "name": "Start + Attach (Interrupt)",
+      "configurations": [
+        "VP Run INTERRUPT",
+        "Attach to Interrupt Demo GDB"
+      ]
+    }
+  ]
+}
