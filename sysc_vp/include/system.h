@@ -26,6 +26,13 @@ enum : mwr::u64 {
     BOOT_LO = 0x00001000,
     BOOT_HI = BOOT_LO + BOOT_SZ - 1,
 
+    // Currently we use byte-byte, instead of byte-bit (optimized) shadow memory
+    SHADOW_SZ = SRAM_SZ,
+    // Must match SHADOW_BASE in riscv/riscv_shadow_mem.sail,
+    // and rv_shadow_base in pydrofoil riscv/supportcoderiscv.py.
+    SHADOW_LO = 0xC0000000,
+    SHADOW_HI = SHADOW_LO + SHADOW_SZ - 1,
+
     UART0_LO = 0x10009000,
     UART0_HI = UART0_LO + 0x1000 - 1,
 
@@ -47,6 +54,7 @@ class system : public vcml::system {
 
     vcml::property<range> ram;
     vcml::property<range> bram;
+    vcml::property<range> shadow;
     vcml::property<range> addr_uart0;
     vcml::property<range> addr_plic;
     vcml::property<vcml::range> addr_simdev;
@@ -65,6 +73,7 @@ class system : public vcml::system {
     vcml::generic::bus m_bus;
     vcml::generic::memory m_ram;
     vcml::generic::memory m_bram;
+    vcml::generic::memory m_shadow;
 
     // A throttle ensures the simulation runs
     // at a controlled pace, not faster than real time.
