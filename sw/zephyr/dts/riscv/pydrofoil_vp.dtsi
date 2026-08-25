@@ -1,0 +1,93 @@
+/*
+ * Devicetree for the vcml-pydrofoil virtual platform.
+ *
+ * Written against sysc_vp/include/system.h rather than derived from
+ * qemu/virt-riscv.dtsi: the VP shares the CPU architecture with the QEMU virt
+ * machine, but not its memory map. Inheriting that devicetree meant disabling
+ * or overriding most of what it declares.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "vcml,pydrofoil-vp";
+	model = "vcml-pydrofoil virtual platform";
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* The VP instantiates a single hart (sysc_vp/src/system.cpp). */
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			reg = <0>;
+			status = "okay";
+			compatible = "riscv";
+			clock-frequency = <1000000000>; /* system.clk_cpu.hz */
+
+			hlic0: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+				interrupt-controller;
+			};
+		};
+	};
+
+	/*
+	 * SRAM_LO / SRAM_SZ (system.h:21-22). The size is capped by the shadow
+	 * memory that the poison instructions mirror every write into:
+	 * shadow = guest + 0x40000000 (POISON_INSTRUCTIONS.md:38-39), sized
+	 * SHADOW_SZ = SRAM_SZ (system.h:30). RAM beyond that produces shadow
+	 * addresses outside the mapped region.
+	 */
+	ram0: memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x20000>;
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		/*
+		 * PLIC_LO / PLIC_HI (system.h:41-42).
+		 *
+		 * ndev is 1023, not 1024: the model reserves IRQ 0 and creates
+		 * NIRQ/32 = 32 enable registers per context, while the Zephyr
+		 * driver sizes that array as ndev/32 + 1 and would touch a 33rd.
+		 *
+		 * Only hart 0 in M-mode is listed, matching the single context
+		 * the VP binds (system.cpp: m_plic.irqt[0]).
+		 */
+		plic: interrupt-controller@1000a000 {
+			compatible = "sifive,plic-1.0.0";
+			reg = <0x1000a000 0x224fff>;
+			interrupts-extended = <&hlic0 11>;
+			interrupt-controller;
+			riscv,max-priority = <7>;
+			riscv,ndev = <1023>;
+			#address-cells = <0>;
+			#interrupt-cells = <2>;
+		};
+
+		/* UART0_LO (system.h:36), a vcml::serial::nrf51 instance. */
+		uart0: uart@10009000 {
+			compatible = "vcml,nrf51-uart";
+			reg = <0x10009000 0x1000>;
+			interrupts = <5 1>; /* IRQ_UART0 (system.h:45) */
+			interrupt-parent = <&plic>;
+			status = "okay";
+		};
+	};
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,sram = &ram0;
+	};
+};

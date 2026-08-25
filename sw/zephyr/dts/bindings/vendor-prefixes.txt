@@ -1,0 +1,4 @@
+# Device tree binding vendor prefix registry for the vcml-pydrofoil virtual
+# platform. Zephyr picks this up per DTS_ROOT (cmake/modules/dts.cmake).
+#
+vcml	Virtual Components Modeling Library

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  UART of the vcml::serial::nrf51 model as instantiated by the vcml-pydrofoil
+  virtual platform. Register layout follows the nRF51 UART (task/event
+  registers plus ENABLE/RXD/TXD), but the peripheral is memory mapped at an
+  address chosen by the VP rather than by a Nordic SoC.
+
+compatible: "vcml,nrf51-uart"
+
+include: uart-controller.yaml
+
+properties:
+  reg:
+    required: true
+
+  interrupts:
+    required: false

@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/dts-v1/;
+
+#include <pydrofoil_vp.dtsi>
+
+&cpu0 {
+	riscv,isa-base = "rv64i";
+	riscv,isa-extensions = "i", "m", "a", "c", "zicsr", "zifencei";
+};

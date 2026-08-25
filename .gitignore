@@ -16,3 +16,4 @@ _pydrofoilcapi_cffi.*
 .cache
 **/build/
 **/bin/
+sw/zephyr/workspace/

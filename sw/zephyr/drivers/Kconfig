@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config UART_PYDROFOIL
+	bool "Pydrofoil VP UART driver"
+	default y
+	depends on SERIAL
+	depends on DT_HAS_VCML_NRF51_UART_ENABLED
+	select SERIAL_HAS_DRIVER
+	help
+	  Polling UART driver for the vcml::serial::nrf51 model instantiated
+	  by the vcml-pydrofoil virtual platform at 0x10009000.
+
+	  The model transmits synchronously on a TXD write, so this driver
+	  implements poll_in/poll_out only.

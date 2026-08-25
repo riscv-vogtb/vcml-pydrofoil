@@ -1,0 +1,6 @@
+board:
+  name: pydrofoil_64
+  full_name: Pydrofoil 64-bit Virtual Prototype
+  vendor: vcml
+  socs:
+    - name: qemu_virt_riscv64

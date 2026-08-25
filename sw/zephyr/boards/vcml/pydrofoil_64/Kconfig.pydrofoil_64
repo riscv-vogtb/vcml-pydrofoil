@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_PYDROFOIL_64
+	select SOC_QEMU_VIRT_RISCV64
