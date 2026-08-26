@@ -42,6 +42,9 @@ fi
 export ZEPHYR_TOOLCHAIN_VARIANT="${ZEPHYR_TOOLCHAIN_VARIANT:-zephyr}"
 export ZEPHYR_SDK_INSTALL_DIR="${ZEPHYR_SDK_INSTALL_DIR:-$HOME/zephyr-sdk-0.17.4}"
 
+# Zephyr requires Python >= 3.12; `python3` defaults to 3.6 on RHEL 8.
+PYTHON_FOR_VENV=python3.12
+
 WORKSPACE="${ZEPHYR_WORKSPACE:-$SOURCE/workspace}"
 
 if [[ ! -d "$WORKSPACE/zephyr" ]]; then
@@ -62,7 +65,7 @@ EOF
 
   mkdir -p "$WORKSPACE"
   cd "$WORKSPACE"
-  python3 -m venv .venv
+  "$PYTHON_FOR_VENV" -m venv .venv
   source "$WORKSPACE/.venv/bin/activate"
   pip install --quiet west
   # The revision has to be checked out after cloning: west turns --mr into
@@ -99,10 +102,31 @@ BUILD_DIR="$ZEPHYR_BASE/build/$APP-$BOARD"
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
   west build --build-dir "$BUILD_DIR" -b "$BOARD" "$APP_PATH"
 else
-  west build --build-dir "$BUILD_DIR" -b "$BOARD" "$APP_PATH" -- \
-    -DBOARD_ROOT="$SOURCE" \
-    -DDTS_ROOT="$SOURCE" \
+  EXTRA_CMAKE_ARGS=(
+    -DBOARD_ROOT="$SOURCE"
+    -DDTS_ROOT="$SOURCE"
     -DZEPHYR_EXTRA_MODULES="$SOURCE/drivers"
+  )
+  if [[ "$ZEPHYR_TOOLCHAIN_VARIANT" == "llvm" ]]; then
+    # DTS preprocessing calls clang directly, without CMake's usual --target
+    # injection; clang's own default triple may not even be valid.
+    case "$BOARD" in
+      *64) triple=riscv64-unknown-elf ;;
+      *) triple=riscv32-unknown-elf ;;
+    esac
+    EXTRA_CMAKE_ARGS+=(-DDTS_EXTRA_CPPFLAGS=--target=$triple)
+    # Default linker is the SDK's cross ld; use the self-contained lld instead.
+    EXTRA_CMAKE_ARGS+=(-DCONFIG_LLVM_USE_LLD=y)
+    # Default runtime lib is GCC's libgcc regardless of toolchain; use compiler-rt.
+    EXTRA_CMAKE_ARGS+=(-DCONFIG_COMPILER_RT_RTLIB=y)
+    # The llvm variant here is for -riscv-stack-poison testing, which only
+    # instruments real stack loads/stores -- -O0 keeps those from being
+    # optimized away. lld can't relocate the kernel's TLS accessors at -O0,
+    # so TLS (unused by these apps) is dropped too.
+    EXTRA_CMAKE_ARGS+=(-DCONFIG_NO_OPTIMIZATIONS=y)
+    EXTRA_CMAKE_ARGS+=(-DCONFIG_THREAD_LOCAL_STORAGE=n)
+  fi
+  west build --build-dir "$BUILD_DIR" -b "$BOARD" "$APP_PATH" -- "${EXTRA_CMAKE_ARGS[@]}"
 fi
 
 # Copy the artifacts next to the application so the VP configs can reference a
@@ -117,6 +141,12 @@ done
 # Kept for diffing what the board definition actually resolved to.
 cp "$BUILD_DIR/zephyr/zephyr.dts" "$out/" 2>/dev/null || true
 cp "$BUILD_DIR/zephyr/.config" "$out/" 2>/dev/null || true
+
+# Best-effort: needs glibc >= 2.39 for this LLVM build, so silently skip on
+# hosts where it can't run (see README).
+if [[ "$ZEPHYR_TOOLCHAIN_VARIANT" == "llvm" ]]; then
+  "$LLVM_TOOLCHAIN_PATH/bin/llvm-objdump" -d "$out/zephyr.elf" > "$out/zephyr.elf.dump" 2>/dev/null || rm -f "$out/zephyr.elf.dump"
+fi
 
 echo
 echo "Artifacts in ${out#"$SOURCE"/}:"
