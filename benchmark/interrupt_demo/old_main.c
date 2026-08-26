@@ -173,11 +173,7 @@ void trap_dispatch(void)
         csr_skip_faulting_instruction();
     }
     else
-    {
         uart_print("Unhandled trap\n");
-        uart_print_long(cause);
-        uart_print_long(code);
-    }
 }
 
 void stop_simulation()
@@ -190,16 +186,38 @@ void stop_simulation()
     }
 }
 
-void read_to_uninit_memory()
+// rs1 is the physical guest address (not an offset); the model computes
+// shadow = addr + SHADOW_DISP (sail-riscv model/riscv_shadow_mem.sail).
+__attribute__((noinline, noclone, noipa)) static void mpoison(long addr, long len)
 {
-    int buf[8];
 
-    buf[0] = 123;
+    // .insn r opcode, funct3, funct7, rd, rs1, rs2
+    asm volatile(".insn r 0x0b, 0x0, 0x00, x0, %0, %1"
+                 :
+                 : "r"(addr), "r"(len)
+                 : "memory");
+}
+__attribute__((noinline, noclone, noipa)) static void munpoison(long addr, long len)
+{
 
-    int x = buf[1]; // this should cause a trap
-    (void)x;
+    // .insn r opcode, funct3, funct7, rd, rs1, rs2
+    asm volatile(
+        ".insn r 0x0b, 0x1, 0x00, x0, %0, %1"
+        :
+        : "r"(addr), "r"(len)
+        : "memory");
+}
+__attribute__((noinline, noclone, noipa)) static long mcheckpoison(long addr, long len)
+{
+    long result;
 
-    return;
+    // .insn r opcode, funct3, funct7, rd, rs1, rs2
+    asm volatile(".insn r 0x0b, 0x2, 0x00, %0, %1, %2"
+                 : "=r"(result)
+                 : "r"(addr), "r"(len)
+                 : "memory");
+
+    return result;
 }
 
 int main(void)
@@ -217,8 +235,34 @@ int main(void)
     while (!irq_flag)
         ;
     uart_print("Interrupt received\n");
+    long res;
+    res = mcheckpoison(0x80000020L, 8);
+    uart_print("Result: ");
+    uart_print_long(res);
 
-    read_to_uninit_memory();
+    mpoison(0x80000020L, 8);
+
+    res = mcheckpoison(0x80000020L, 8);
+    uart_print("Result: ");
+    uart_print_long(res);
+
+    munpoison(0x80000020L, 8);
+
+    res = mcheckpoison(0x80000020L, 8);
+    uart_print("Result: ");
+    uart_print_long(res);
+    uart_putc('\n');
+
+    volatile int test[4];
+
+    // simulate what the compiler would do with manual poison calls
+    mpoison((long)test, sizeof(test));
+    test[2] = 123;
+    munpoison((long)&test[2], sizeof(test[2]));
+
+    // this should cause a trap
+    volatile int x = test[1];
+    (void)x;
 
     stop_simulation();
 }

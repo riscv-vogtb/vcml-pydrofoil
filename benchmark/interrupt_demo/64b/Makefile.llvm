@@ -1,22 +1,26 @@
-LLVM_DIR ?= /home/vogtb/alma-riscv-llvm-build/bin
+LLVM_DIR ?= /home/vogtb/theorem_stuff/llvm-poison-all/bin
 CC      = $(LLVM_DIR)/clang
 OBJCOPY = $(LLVM_DIR)/llvm-objcopy
 OBJDUMP = $(LLVM_DIR)/llvm-objdump
 
 # clang defaults to riscv64-unknown-linux-gnu; bare-metal needs the elf triple.
 TARGET  = --target=riscv64-unknown-elf
+# zicsr/zifencei are no longer implied by 'i' since LLVM 17 - startup.S needs them.
 ARCH    = -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany
 
 SRC_DIR = ..
 LINK_DIR = ..
 O ?= $(PWD)/build
 
-CFLAGS  = $(TARGET) $(ARCH) -Wall -O0 -g
+CFLAGS  = $(TARGET) $(ARCH) -ffreestanding -Wall -O0 -g
 LDFLAGS = $(TARGET) $(ARCH) -fuse-ld=lld -nostdlib -nostartfiles -T $(LINK_DIR)/link.ld
 
 OBJS = $(O)/startup.o $(O)/main.o
 
 all: $(O)/main.elf
+
+dump: $(O)/main.dump
+bin:  $(O)/main.bin
 
 $(O):
 	mkdir -p $@
@@ -39,4 +43,4 @@ $(O)/main.bin: $(O)/main.elf
 clean:
 	rm -rf $(O)
 
-.PHONY: all clean
+.PHONY: all clean dump bin

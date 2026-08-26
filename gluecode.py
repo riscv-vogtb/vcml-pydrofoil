@@ -92,6 +92,11 @@ class C:
         self.steps = 0
         self.cpu._set_sail_memory_bounds(0x00000000, 0x4000000000)
         self.set_verbosity(self.verbosity)
+        # Sail defaults rv_htif_tohost to 0x80001000, which sits inside the
+        # loaded image. HTIF addresses are excluded from physical memory, so a
+        # fetch from there raises an instruction access fault. Move it out of
+        # the way of anything the VP maps.
+        self.cpu._set_htif_tohost(0x900F0000)
 
 @ffi.def_extern()
 def pydrofoil_allocate_cpu(spec, fn):
