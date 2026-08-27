@@ -1,0 +1,4 @@
+name: vp_lib
+build:
+  cmake: .
+  kconfig: Kconfig

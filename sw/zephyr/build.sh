@@ -105,7 +105,7 @@ else
   EXTRA_CMAKE_ARGS=(
     -DBOARD_ROOT="$SOURCE"
     -DDTS_ROOT="$SOURCE"
-    -DZEPHYR_EXTRA_MODULES="$SOURCE/drivers"
+    -DZEPHYR_EXTRA_MODULES="$SOURCE/drivers;$SOURCE/lib"
   )
   if [[ "$ZEPHYR_TOOLCHAIN_VARIANT" == "llvm" ]]; then
     # DTS preprocessing calls clang directly, without CMake's usual --target

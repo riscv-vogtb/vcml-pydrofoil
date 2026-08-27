@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config VP_FAULT_REPORT
+	bool "Classify and report faults on the vcml-pydrofoil VP"
+	default y
+	help
+	  Installs a k_sys_fatal_error_handler that tells a poison hit from an
+	  ordinary fault and ends the run through the VP's simdev with a
+	  distinguishing exit code.
+
+	  Turn this off to supply your own handler; the two cannot coexist.

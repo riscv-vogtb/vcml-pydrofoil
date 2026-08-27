@@ -10,3 +10,9 @@ CONFIG_SYS_CLOCK_EXISTS=n
 
 # Pydrofoil does not implement PMP.
 CONFIG_RISCV_PMP=n
+
+# The fatal handler walks the stack to print a call trace, which on a poisoned
+# stack faults again before the handler ever runs (z_riscv_unwind_stack runs
+# ahead of z_fatal_error, arch/riscv/core/fatal.c). mcause, mtval and the
+# register dump are unaffected.
+CONFIG_EXCEPTION_STACK_TRACE=n
