@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Default container program
 CONTAINER_PROGRAM="docker"
 CFG_FILE=""
@@ -35,6 +37,12 @@ elif [[ "$CONTAINER_PROGRAM" == "podman" ]]; then
 	fi
 fi
 
+# Alma needs :z to bind the mount, otherwise this results in "permission denied"
+MOUNT_RO_OPTS="ro"
+if command -v getenforce &> /dev/null && [[ "$(getenforce)" != "Disabled" ]]; then
+    MOUNT_RO_OPTS="ro,z"
+fi
+
 IMAGE_NAME="vcml-pydrofoil:latest"
 
 # Detects if the script is running in an interactive terminal (TTY)
@@ -46,15 +54,16 @@ fi
 
 # If the cfg file was provided, this overwrites the one specified in the Dockerfile
 if [[ -n "$CFG_FILE" ]]; then
-    CFG_BASENAME=$(basename "$CFG_FILE")
+    # If cfg files use relative paths, the repo root must be mounted into the container correctly
+    CFG_REL_PATH="$(realpath --relative-to="$SCRIPT_DIR" "$(realpath "$CFG_FILE")")"
 
     $CONTAINER_PROGRAM run \
         $CONTAINER_PROGRAM_FLAGS \
         --rm \
         $INTERACTIVE_FLAGS \
-        -v "$(dirname "$(realpath "$CFG_FILE")"):/configs:ro" \
+        -v "$SCRIPT_DIR:/configs:$MOUNT_RO_OPTS" \
         "$IMAGE_NAME" \
-        "$CFG_BASENAME"
+        "$CFG_REL_PATH"
 else
     $CONTAINER_PROGRAM run \
         $CONTAINER_PROGRAM_FLAGS \

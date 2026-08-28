@@ -1,0 +1,4 @@
+sw/zephyr/workspace
+sw/zephyr/workspace/*
+juliet_test_suite
+juliet_test_suite/*

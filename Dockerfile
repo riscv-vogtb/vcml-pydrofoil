@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
@@ -38,12 +38,15 @@ ENV PYTHONPATH="/vcml-pydrofoil"
 #     tar -xjf ./artifact/pypy-pydrofoil-scripting-experimental.tar.bz2 \
 #        -C ./pypy-pydrofoil-scripting-experimental --strip-components=1
 
-RUN chmod +x build_sim.sh
+RUN chmod a+x build_sim.sh
 RUN ./build_sim.sh
 
 ENV LD_LIBRARY_PATH=/vcml-pydrofoil/pypy-pydrofoil-scripting-experimental/bin:/vcml-pydrofoil:/vcml-pydrofoil/build:/vcml-pydrofoil/sysc_vp:${LD_LIBRARY_PATH:-}
 
-RUN chmod +x launch.sh
+RUN chmod a+x launch.sh
+
+# RUN inherits host's umask, on alma this results in "no permission" later on (podman)
+RUN chmod -R a+rX /vcml-pydrofoil /opt/pypy
 
 # We're going to be using the absolute path, since the path starts with the "/"
 ENTRYPOINT ["/vcml-pydrofoil/launch.sh"]
