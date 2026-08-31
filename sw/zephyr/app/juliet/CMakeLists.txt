@@ -32,3 +32,5 @@ target_include_directories(app PRIVATE
   ${JULIET_ROOT}/testcases
 )
 target_compile_options(app PRIVATE -mllvm -riscv-stack-poison)
+# picolibc does not declare alloca, which the alloca testcases go through.
+target_compile_definitions(app PRIVATE alloca=__builtin_alloca)

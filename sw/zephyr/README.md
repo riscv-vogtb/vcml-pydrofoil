@@ -73,6 +73,24 @@ podman run --rm --security-opt label=disable \
 ```
 
 
+## Juliet CWE457 suite
+
+`tools/juliet/run_suite.sh` (in the repo root) builds each testcase into
+`app/juliet` and runs it on the VP. Every testcase yields two elfs, one for its
+bad() half and one for its good() half, so a fault in one cannot keep the other
+from being observed; `--phase bad` builds only one of them. Building happens in
+a container, the VP runs on the host, so it needs podman either way.
+
+```bash
+./tools/juliet/run_suite.sh --list                # 560 testcases
+./tools/juliet/run_suite.sh --filter '*_01'       # one per category
+./tools/juliet/run_suite.sh                       # everything
+```
+
+Results land in `results/juliet`: `results.csv`, plus the elf, config and UART
+log of every testcase. A run rebuilds the `juliet-<board>` build directory from
+scratch; pass `--no-fresh` to keep it, at the risk of a stale CMake cache.
+
 ## Instructions for new apps
 
 Apps that test mpoison should add

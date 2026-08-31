@@ -19,3 +19,4 @@ _pydrofoilcapi_cffi.*
 sw/zephyr/workspace/
 juliet_test_suite
 juliet_test_suite/*
+results/
