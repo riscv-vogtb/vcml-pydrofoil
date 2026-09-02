@@ -22,9 +22,11 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parents[2]
 ZEPHYR_DIR = REPO / "sw" / "zephyr"
@@ -36,6 +38,11 @@ CASE_RE = re.compile(rf"^{SUITE}__(?P<category>.+)_(?P<variant>\d\d)(?P<part>[ab
 # Unanchored: a testcase may leave an unterminated line before the marker.
 PHASE_RE = re.compile(r"VP-PHASE: (\w+)")
 RESULT_RE = re.compile(r"VP-RESULT: (\w+) addr=(\S+) mcause=(\d+)")
+
+# Column order of results.csv, and the only fields a record carries.
+FIELDS = ("key", "name", "category", "variant", "phase", "expected",
+          "outcome", "verdict", "detail", "exit_code", "seconds")
+MARKS = {"PASS": "+", "FAIL": "-"}
 
 
 @dataclass
@@ -60,6 +67,28 @@ class Case:
         return "POISON"
 
 
+@dataclass
+class Unit:
+    """One half of a testcase: what gets built, run and reported as one row."""
+    case: Case
+    phase: str
+
+    @property
+    def key(self):
+        return f"{self.case.name}.{self.phase}"
+
+    @property
+    def expected(self):
+        return self.case.expected(self.phase)
+
+
+class RunResult(NamedTuple):
+    outcome: str
+    detail: str
+    exit_code: int
+    seconds: float
+
+
 def discover(juliet_root):
     grouped = {}
     for path in sorted((juliet_root / "testcases" / SUITE).glob("s*/*.c")):
@@ -69,7 +98,16 @@ def discover(juliet_root):
     return [Case(cat, var, files) for (cat, var), files in sorted(grouped.items())]
 
 
-def case_source(case, phase, juliet_root):
+def new_record(unit):
+    record = dict.fromkeys(FIELDS, "")
+    record.update(key=unit.key, name=unit.case.name, category=unit.case.category,
+                  variant=unit.case.variant, phase=unit.phase,
+                  expected=unit.expected)
+    return record
+
+
+def case_source(unit, juliet_root):
+    case = unit.case
     includes = "\n".join(
         f'#include "{f.relative_to(juliet_root / "testcases").as_posix()}"'
         for f in case.files
@@ -79,11 +117,11 @@ def case_source(case, phase, juliet_root):
 {includes}
 
 const char *juliet_case_name = "{case.name}";
-const char *juliet_phase = "{phase}";
+const char *juliet_phase = "{unit.phase}";
 
 void juliet_run(void)
 {{
-\t{case.entry}_{phase}();
+\t{case.entry}_{unit.phase}();
 }}
 """
 
@@ -99,54 +137,57 @@ def configure(board, fresh):
     return build_dir
 
 
-def build_unit(case, phase, build_dir, juliet_root, elf_dir):
-    (build_dir / "juliet_case.c").write_text(case_source(case, phase, juliet_root))
+def build_unit(unit, build_dir, juliet_root, elf_dir):
+    (build_dir / "juliet_case.c").write_text(case_source(unit, juliet_root))
     proc = subprocess.run(["ninja", "-C", str(build_dir)],
                           capture_output=True, text=True)
     if proc.returncode != 0:
         return proc.stdout + proc.stderr
-    shutil.copy(build_dir / "zephyr" / "zephyr.elf",
-                elf_dir / f"{case.name}.{phase}.elf")
+    shutil.copy(build_dir / "zephyr" / "zephyr.elf", elf_dir / f"{unit.key}.elf")
     return None
 
 
 def write_cfg(key, template, cfg_path):
     elf = f"${{dir}}/../elf/{key}.elf"
+    overrides = {"system.core.symbols": elf,
+                 "system.core.elf": elf,
+                 "system.loader.images": elf,
+                 "system.name": f"juliet {key}"}
     out = []
     for line in template.splitlines():
         field_name = line.split("=", 1)[0].strip()
-        if field_name in ("system.core.symbols", "system.core.elf",
-                          "system.loader.images"):
-            out.append(f"{field_name} = {elf}")
-        elif field_name == "system.name":
-            out.append(f"system.name = juliet {key}")
+        if field_name in overrides:
+            out.append(f"{field_name} = {overrides[field_name]}")
         else:
             out.append(line)
     cfg_path.write_text("\n".join(out) + "\n")
 
 
-def run_unit(key, results, template, image, timeout):
-    cfg = results / "cfg" / f"{key}.cfg"
-    write_cfg(key, template, cfg)
+def podman_run(cmd, timeout):
+    """Return exit code, combined output, and whether the VP had to be killed."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout + proc.stderr, False
+    except subprocess.TimeoutExpired as exc:
+        return -1, (exc.stdout or b"").decode(errors="replace"), True
+
+
+def run_unit(unit, results, template, image, timeout):
+    cfg = results / "cfg" / f"{unit.key}.cfg"
+    write_cfg(unit.key, template, cfg)
     cmd = ["podman", "run", "--rm", "--userns", "keep-id",
            "--security-opt", "label=disable", "-v", f"{REPO}:/configs:ro",
            image, str(cfg.relative_to(REPO))]
     started = time.time()
     # A run that normally takes seconds can stall under load; retry once so a
     # flake does not read as a result.
-    for attempt in (1, 2):
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True,
-                                  timeout=timeout)
-            output, rc, timed_out = proc.stdout + proc.stderr, proc.returncode, False
-        except subprocess.TimeoutExpired as exc:
-            output = (exc.stdout or b"").decode(errors="replace")
-            rc, timed_out = -1, True
+    for _ in range(2):
+        rc, output, timed_out = podman_run(cmd, timeout)
         outcome, detail = classify(rc, output, timed_out)
-        if outcome != "TIMEOUT" or attempt == 2:
+        if outcome != "TIMEOUT":
             break
-    (results / "logs" / f"{key}.log").write_text(output)
-    return outcome, detail, rc, time.time() - started
+    (results / "logs" / f"{unit.key}.log").write_text(output)
+    return RunResult(outcome, detail, rc, time.time() - started)
 
 
 def classify(rc, output, timed_out):
@@ -167,58 +208,98 @@ def classify(rc, output, timed_out):
 def merge_results(path, rows):
     """Keep rows of testcases this run did not cover, so a filtered rerun does
     not throw away the rest of the report."""
-    fields = list(rows[0])
     merged = {}
     if path.exists():
         with path.open(newline="") as fh:
             for old in csv.DictReader(fh):
-                merged[old["key"]] = {f: old.get(f, "") for f in fields}
+                merged[old["key"]] = {f: old.get(f, "") for f in FIELDS}
     for row in rows:
         merged[row["key"]] = row
     ordered = sorted(merged.values(), key=lambda r: r["key"])
     with path.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(ordered)
     return ordered
 
 
-def report(records):
-    variants = sorted({r["variant"] for r in records})
-    categories = sorted({r["category"] for r in records})
+def print_grid(phase, categories, variants, marks):
     width = max(len(c) for c in categories)
+    print(f"\nphase {phase}")
+    print(f"{'category'.ljust(width)}  " + " ".join(v.rjust(2) for v in variants))
+    for cat in categories:
+        cells = (marks.get((cat, var), "").rjust(2) for var in variants)
+        print(f"{cat.ljust(width)}  " + " ".join(cells))
 
+
+def report(records):
+    categories = sorted({r["category"] for r in records})
+    variants = sorted({r["variant"] for r in records})
     for phase in PHASES:
-        by_key = {(r["category"], r["variant"]): r for r in records
-                  if r["phase"] == phase}
-        if not by_key:
-            continue
-        print(f"\nphase {phase}")
-        print(f"{'category'.ljust(width)}  " + " ".join(v.rjust(2) for v in variants))
-        for cat in categories:
-            cells = []
-            for var in variants:
-                rec = by_key.get((cat, var))
-                mark = "" if rec is None else {"PASS": "+", "FAIL": "-"}.get(
-                    rec["verdict"], "?")
-                cells.append(mark.rjust(2))
-            print(f"{cat.ljust(width)}  " + " ".join(cells))
+        marks = {(r["category"], r["variant"]): MARKS.get(r["verdict"], "?")
+                 for r in records if r["phase"] == phase}
+        if marks:
+            print_grid(phase, categories, variants, marks)
     print("\n  + expected   - unexpected\n")
 
-    counts = {}
-    for rec in records:
-        key = (rec["phase"], rec["verdict"], rec["outcome"])
-        counts[key] = counts.get(key, 0) + 1
+    counts = Counter((r["phase"], r["verdict"], r["outcome"]) for r in records)
     for (phase, verdict, outcome), n in sorted(counts.items()):
         print(f"  {phase:4}  {verdict:4}  {outcome:15} {n:4}")
-    failed = [r for r in records if r["verdict"] != "PASS"]
+    failed = sorted((r for r in records if r["verdict"] != "PASS"),
+                    key=lambda r: r["key"])
     print(f"\n  {len(records) - len(failed)}/{len(records)} as expected")
-    for rec in sorted(failed, key=lambda r: r["key"]):
+    for rec in failed:
         print(f"    {rec['key']}: expected {rec['expected']}, got {rec['outcome']} "
               f"{rec['detail']}")
 
 
-def main():
+def build_all(units, records, args):
+    if os.environ.get("ZEPHYR_TOOLCHAIN_VARIANT") != "llvm":
+        sys.exit("ZEPHYR_TOOLCHAIN_VARIANT must be llvm; gcc emits no mpoison")
+    build_dir = configure(args.board, fresh=not args.no_fresh)
+    started = time.time()
+    for i, unit in enumerate(units, 1):
+        error = build_unit(unit, build_dir, args.juliet_root, args.results / "elf")
+        if error:
+            records[unit.key].update(outcome="BUILD_FAIL", verdict="FAIL",
+                                     detail=error.strip().splitlines()[-1][:200])
+            (args.results / "logs" / f"{unit.key}.build.log").write_text(error)
+        print(f"[{i}/{len(units)}] build {unit.key}{' FAILED' if error else ''}",
+              flush=True)
+    print(f"built {len(units)} in {time.time() - started:.0f}s")
+
+
+def run_all(units, records, args):
+    runnable = []
+    for unit in units:
+        record = records[unit.key]
+        if record["outcome"] == "BUILD_FAIL":
+            continue
+        if (args.results / "elf" / f"{unit.key}.elf").exists():
+            runnable.append(unit)
+        else:
+            record.update(outcome="NO_ELF", verdict="FAIL",
+                          detail="build phase did not produce an elf")
+    template = (REPO / "benchmark" / "zephyr" / "juliet.cfg").read_text()
+    started = time.time()
+
+    def work(unit):
+        return unit, run_unit(unit, args.results, template, args.image,
+                              args.timeout)
+
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for i, (unit, result) in enumerate(pool.map(work, runnable), 1):
+            record = records[unit.key]
+            verdict = "PASS" if result.outcome == record["expected"] else "FAIL"
+            record.update(outcome=result.outcome, detail=result.detail,
+                          exit_code=result.exit_code,
+                          seconds=f"{result.seconds:.1f}", verdict=verdict)
+            print(f"[{i}/{len(runnable)}] {verdict:4} {unit.key} "
+                  f"-> {result.outcome}", flush=True)
+    print(f"ran {len(runnable)} in {time.time() - started:.0f}s")
+
+
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--filter", default="*", help="fnmatch pattern on the case name")
@@ -239,12 +320,17 @@ def main():
     args = ap.parse_args()
 
     # The VP reads its config through the repo mounted as /configs.
-    args.results = Path(args.results)
     args.results = (args.results if args.results.is_absolute()
                     else REPO / args.results).resolve()
     if not args.results.is_relative_to(REPO):
         sys.exit(f"--results must be inside {REPO}")
+    return args
 
+
+def main():
+    args = parse_args()
+
+    # Alle testcases sammeln
     cases = [c for c in discover(args.juliet_root)
              if fnmatch.fnmatch(c.name, args.filter)]
     if not cases:
@@ -256,67 +342,22 @@ def main():
         print(f"\n{len(cases)} testcases")
         return
 
+    # Default: run both good and bad, which each have their own elf, unit + record
     phases = (args.phase,) if args.phase else PHASES
-    units = [(c, p) for c in cases for p in phases]
+    units = [Unit(c, p) for c in cases for p in phases]
+    records = {u.key: new_record(u) for u in units}
 
-    args.results.mkdir(parents=True, exist_ok=True)
-    for sub in ("elf", "cfg", "logs"):
-        (args.results / sub).mkdir(exist_ok=True)
+    # Everything a run produces lands under --results.
+    for subdir in ("elf", "cfg", "logs"):
+        (args.results / subdir).mkdir(parents=True, exist_ok=True)
 
-    records = {}
-    for case, phase in units:
-        key = f"{case.name}.{phase}"
-        records[key] = {"key": key, "name": case.name, "category": case.category,
-                        "variant": case.variant, "phase": phase,
-                        "expected": case.expected(phase), "outcome": "",
-                        "verdict": "", "detail": "", "exit_code": "", "seconds": ""}
-
+    # Build, then run; either half can be left to the other environment.
     if not args.run_only:
-        if os.environ.get("ZEPHYR_TOOLCHAIN_VARIANT") != "llvm":
-            sys.exit("ZEPHYR_TOOLCHAIN_VARIANT must be llvm; gcc emits no mpoison")
-        build_dir = configure(args.board, fresh=not args.no_fresh)
-        started = time.time()
-        for i, (case, phase) in enumerate(units, 1):
-            key = f"{case.name}.{phase}"
-            error = build_unit(case, phase, build_dir, args.juliet_root,
-                               args.results / "elf")
-            if error:
-                records[key].update(outcome="BUILD_FAIL", verdict="FAIL",
-                                    detail=error.strip().splitlines()[-1][:200])
-                (args.results / "logs" / f"{key}.build.log").write_text(error)
-            print(f"[{i}/{len(units)}] build {key}{' FAILED' if error else ''}",
-                  flush=True)
-        print(f"built {len(units)} in {time.time() - started:.0f}s")
-
+        build_all(units, records, args)
     if not args.build_only:
-        runnable = []
-        for case, phase in units:
-            key = f"{case.name}.{phase}"
-            if records[key]["outcome"] == "BUILD_FAIL":
-                continue
-            if (args.results / "elf" / f"{key}.elf").exists():
-                runnable.append(key)
-            else:
-                records[key].update(outcome="NO_ELF", verdict="FAIL",
-                                    detail="build phase did not produce an elf")
-        template = (REPO / "benchmark" / "zephyr" / "juliet.cfg").read_text()
-        started = time.time()
+        run_all(units, records, args)
 
-        def work(key):
-            return key, run_unit(key, args.results, template, args.image,
-                                 args.timeout)
-
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            for i, (key, (outcome, detail, rc, secs)) in enumerate(
-                    pool.map(work, runnable), 1):
-                rec = records[key]
-                rec.update(outcome=outcome, detail=detail, exit_code=rc,
-                           seconds=f"{secs:.1f}",
-                           verdict="PASS" if outcome == rec["expected"] else "FAIL")
-                print(f"[{i}/{len(runnable)}] {rec['verdict']:4} {key} -> {outcome}",
-                      flush=True)
-        print(f"ran {len(runnable)} in {time.time() - started:.0f}s")
-
+    # Fold this run into the report of the ones before it.
     rows = merge_results(args.results / "results.csv", list(records.values()))
     print(f"\nresults in {args.results.relative_to(REPO)}")
 
@@ -325,6 +366,7 @@ def main():
         failed = [r for r in rows if r["outcome"] == "BUILD_FAIL"]
         sys.exit(1 if len(failed) == len(rows) else 0)
 
+    # The exit code carries the verdict, so run_suite.sh can stop on it.
     report(rows)
     sys.exit(1 if any(r["verdict"] == "FAIL" for r in rows) else 0)
 
