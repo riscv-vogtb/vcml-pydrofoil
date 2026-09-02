@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Build and run the Juliet CWE457 testcases on the vcml-pydrofoil VP.
+"""Build and run Juliet testcases on the vcml-pydrofoil VP.
 
+Covers the CWEs mpoison can say something about, see SUITES: uninitialised
+stack variables, dangling stack pointers and stack buffer over/underreads.
 Every testcase yields two elfs, one running its bad() half and one its good()
 half, so that a fault in one cannot keep the other from being observed.
 
@@ -8,9 +10,9 @@ The two phases need different environments: building needs the poison LLVM
 toolchain (glibc >= 2.39, so a container on older hosts), running needs podman
 for the VP image. tools/juliet/run_suite.sh wires both together.
 
-    juliet_suite.py --list
+    juliet_suite.py --list --suite all
     juliet_suite.py --build-only --filter '*_01'
-    juliet_suite.py --run-only   --filter '*_01'
+    juliet_suite.py --run-only   --suite cwe126,cwe127 --variants 01-18
 """
 
 import argparse
@@ -31,25 +33,63 @@ from typing import NamedTuple
 REPO = Path(__file__).resolve().parents[2]
 ZEPHYR_DIR = REPO / "sw" / "zephyr"
 APP = "juliet"
-SUITE = "CWE457_Use_of_Uninitialized_Variable"
 PHASES = ("bad", "good")
 
-CASE_RE = re.compile(rf"^{SUITE}__(?P<category>.+)_(?P<variant>\d\d)(?P<part>[ab]?)\.c$")
 # Unanchored: a testcase may leave an unterminated line before the marker.
 PHASE_RE = re.compile(r"VP-PHASE: (\w+)")
 RESULT_RE = re.compile(r"VP-RESULT: (\w+) addr=(\S+) mcause=(\d+)")
 
 # Column order of results.csv, and the only fields a record carries.
-FIELDS = ("key", "name", "category", "variant", "phase", "expected",
+FIELDS = ("key", "suite", "name", "category", "variant", "phase", "expected",
           "outcome", "verdict", "detail", "exit_code", "seconds")
+# Judged rows carry a verdict, observed ones their outcome -- the grid of an
+# OBSERVE suite is the measurement, not a pass list.
 MARKS = {"PASS": "+", "FAIL": "-"}
+OBSERVED_MARKS = {"POISON": "P", "CLEAN": ".", "FAULT": "F", "TIMEOUT": "T"}
+
+
+def stack_family(family):
+    """Sub-families whose buffer lives on the stack, the only ones mpoison
+    can see. The heap ones are covered by CWE457, and the rest draw their
+    index from sockets, fscanf or rand and do not run under Zephyr."""
+    return "_declare_" in f"_{family}_" or "_alloca_" in f"_{family}_"
+
+
+@dataclass(frozen=True)
+class Suite:
+    cwe: str        # testcase directory name
+    tag: str        # short id for --suite and for the key prefix
+    include: object          # (family) -> bool
+    bad_expected: object     # (family) -> expectation of the bad half
+
+
+SUITES = (
+    # mpoison instruments the stack only, so the heap categories must not
+    # fault -- they are the negative control.
+    Suite("CWE457_Use_of_Uninitialized_Variable", "cwe457", lambda f: True,
+          lambda f: "CLEAN" if "_malloc_" in f else "POISON"),
+    # Whether these fault depends on how the compiler lays out the frame, so
+    # any target would be a guess. OBSERVE records the outcome without judging.
+    Suite("CWE562_Return_of_Stack_Variable_Address", "cwe562", lambda f: True,
+          lambda f: "OBSERVE"),
+    Suite("CWE126_Buffer_Overread", "cwe126", stack_family,
+          lambda f: "OBSERVE"),
+    Suite("CWE127_Buffer_Underread", "cwe127", stack_family,
+          lambda f: "OBSERVE"),
+)
 
 
 @dataclass
 class Case:
-    category: str
+    suite: Suite
+    family: str
     variant: str
     files: list = field(default_factory=list)
+
+    @property
+    def category(self):
+        # Tagged, because char_declare_loop exists in CWE126 and CWE127 alike.
+        return f"{self.suite.tag}_{self.family}"
 
     @property
     def name(self):
@@ -57,14 +97,13 @@ class Case:
 
     @property
     def entry(self):
-        return f"{SUITE}__{self.name}"
+        return f"{self.suite.cwe}__{self.family}_{self.variant}"
 
     def expected(self, phase):
-        # mpoison instruments the stack only, so the heap categories must not
-        # fault -- they are the negative control. good() never should.
-        if phase == "good" or "_malloc_" in self.category:
+        # good() never has a reason to fault, whatever the suite tests.
+        if phase == "good":
             return "CLEAN"
-        return "POISON"
+        return self.suite.bad_expected(self.family)
 
 
 @dataclass
@@ -89,21 +128,40 @@ class RunResult(NamedTuple):
     seconds: float
 
 
-def discover(juliet_root):
-    grouped = {}
-    for path in sorted((juliet_root / "testcases" / SUITE).glob("s*/*.c")):
-        m = CASE_RE.match(path.name)
-        if m:
-            grouped.setdefault((m["category"], m["variant"]), []).append(path)
-    return [Case(cat, var, files) for (cat, var), files in sorted(grouped.items())]
+def discover(juliet_root, suites, variants=None):
+    """Group the testcase files of each suite into cases. Flow variants split
+    over several files (63a/63b, up to 54a-54e) are one case: the parts are
+    compiled together and the entry point drops the letter."""
+    cases = []
+    for suite in suites:
+        case_re = re.compile(rf"^{suite.cwe}__(?P<family>.+)"
+                             rf"_(?P<variant>\d\d)(?P<part>[a-e]?)\.c$")
+        grouped = {}
+        for path in sorted((juliet_root / "testcases" / suite.cwe).glob("**/*.c")):
+            m = case_re.match(path.name)
+            if not m or not suite.include(m["family"]):
+                continue
+            if variants and m["variant"] not in variants:
+                continue
+            grouped.setdefault((m["family"], m["variant"]), []).append(path)
+        cases += [Case(suite, fam, var, files)
+                  for (fam, var), files in sorted(grouped.items())]
+    return cases
 
 
 def new_record(unit):
     record = dict.fromkeys(FIELDS, "")
-    record.update(key=unit.key, name=unit.case.name, category=unit.case.category,
-                  variant=unit.case.variant, phase=unit.phase,
-                  expected=unit.expected)
+    record.update(key=unit.key, suite=unit.case.suite.tag, name=unit.case.name,
+                  category=unit.case.category, variant=unit.case.variant,
+                  phase=unit.phase, expected=unit.expected)
     return record
+
+
+def verdict_for(expected, outcome):
+    # An OBSERVE case has no defensible target; it is measured, not judged.
+    if expected == "OBSERVE":
+        return "INFO"
+    return "PASS" if outcome == expected else "FAIL"
 
 
 def case_source(unit, juliet_root):
@@ -166,7 +224,10 @@ def write_cfg(key, template, cfg_path):
 def podman_run(cmd, timeout):
     """Return exit code, combined output, and whether the VP had to be killed."""
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # An out-of-bounds read puts arbitrary bytes on the UART, so decoding
+        # has to tolerate them rather than raise.
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              errors="replace", timeout=timeout)
         return proc.returncode, proc.stdout + proc.stderr, False
     except subprocess.TimeoutExpired as exc:
         return -1, (exc.stdout or b"").decode(errors="replace"), True
@@ -232,25 +293,43 @@ def print_grid(phase, categories, variants, marks):
         print(f"{cat.ljust(width)}  " + " ".join(cells))
 
 
+def mark_for(record):
+    if record["verdict"] == "INFO":
+        return OBSERVED_MARKS.get(record["outcome"], "?")
+    return MARKS.get(record["verdict"], "?")
+
+
 def report(records):
     categories = sorted({r["category"] for r in records})
     variants = sorted({r["variant"] for r in records})
     for phase in PHASES:
-        marks = {(r["category"], r["variant"]): MARKS.get(r["verdict"], "?")
+        marks = {(r["category"], r["variant"]): mark_for(r)
                  for r in records if r["phase"] == phase}
         if marks:
             print_grid(phase, categories, variants, marks)
-    print("\n  + expected   - unexpected\n")
+    print("\n  judged: + expected  - unexpected")
+    print("  observed: P poison  . clean  F fault  T timeout\n")
 
     counts = Counter((r["phase"], r["verdict"], r["outcome"]) for r in records)
     for (phase, verdict, outcome), n in sorted(counts.items()):
         print(f"  {phase:4}  {verdict:4}  {outcome:15} {n:4}")
-    failed = sorted((r for r in records if r["verdict"] != "PASS"),
+
+    judged = [r for r in records if r["verdict"] in ("PASS", "FAIL")]
+    failed = sorted((r for r in judged if r["verdict"] == "FAIL"),
                     key=lambda r: r["key"])
-    print(f"\n  {len(records) - len(failed)}/{len(records)} as expected")
+    if judged:
+        print(f"\n  {len(judged) - len(failed)}/{len(judged)} as expected")
     for rec in failed:
         print(f"    {rec['key']}: expected {rec['expected']}, got {rec['outcome']} "
               f"{rec['detail']}")
+
+    # The detection rate is the whole point of the OBSERVE suites.
+    observed = Counter((r["suite"], r["phase"], r["outcome"])
+                       for r in records if r["verdict"] == "INFO")
+    if observed:
+        print(f"\n  {sum(observed.values())} observed, no expectation:")
+        for (suite, phase, outcome), n in sorted(observed.items()):
+            print(f"    {suite:8} {phase:4} {outcome:10} {n:4}")
 
 
 def build_all(units, records, args):
@@ -290,7 +369,7 @@ def run_all(units, records, args):
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for i, (unit, result) in enumerate(pool.map(work, runnable), 1):
             record = records[unit.key]
-            verdict = "PASS" if result.outcome == record["expected"] else "FAIL"
+            verdict = verdict_for(record["expected"], result.outcome)
             record.update(outcome=result.outcome, detail=result.detail,
                           exit_code=result.exit_code,
                           seconds=f"{result.seconds:.1f}", verdict=verdict)
@@ -299,10 +378,41 @@ def run_all(units, records, args):
     print(f"ran {len(runnable)} in {time.time() - started:.0f}s")
 
 
+def parse_suites(spec):
+    by_tag = {s.tag: s for s in SUITES}
+    if spec == "all":
+        return SUITES
+    chosen = []
+    for tag in spec.split(","):
+        if tag.strip() not in by_tag:
+            sys.exit(f"unknown suite {tag.strip()!r}; known: {', '.join(by_tag)}")
+        chosen.append(by_tag[tag.strip()])
+    return tuple(chosen)
+
+
+def parse_variants(spec):
+    """"01-18" or "01,63,64"; None means every variant the suite has."""
+    if not spec:
+        return None
+    chosen = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo, hi = (int(x) for x in part.split("-", 1))
+            chosen |= {f"{i:02d}" for i in range(lo, hi + 1)}
+        else:
+            chosen.add(f"{int(part):02d}")
+    return chosen
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--filter", default="*", help="fnmatch pattern on the case name")
+    ap.add_argument("--suite", default="cwe457",
+                    help="comma separated suite tags, or 'all' (default cwe457)")
+    ap.add_argument("--variants",
+                    help="flow variants to keep, e.g. '01-18' (default all)")
     ap.add_argument("--phase", choices=PHASES, help="only one half of each testcase")
     ap.add_argument("--board", default="pydrofoil_64")
     ap.add_argument("--build-only", action="store_true")
@@ -318,6 +428,8 @@ def parse_args():
                                                 REPO / "juliet_test_suite")))
     ap.add_argument("--list", action="store_true", help="list cases and exit")
     args = ap.parse_args()
+    args.suites = parse_suites(args.suite)
+    args.variants = parse_variants(args.variants)
 
     # The VP reads its config through the repo mounted as /configs.
     args.results = (args.results if args.results.is_absolute()
@@ -331,13 +443,13 @@ def main():
     args = parse_args()
 
     # Alle testcases sammeln
-    cases = [c for c in discover(args.juliet_root)
+    cases = [c for c in discover(args.juliet_root, args.suites, args.variants)
              if fnmatch.fnmatch(c.name, args.filter)]
     if not cases:
         sys.exit(f"no testcases match {args.filter!r}")
     if args.list:
         for case in cases:
-            print(f"{case.name:55} bad={case.expected('bad'):6} "
+            print(f"{case.name:52} bad={case.expected('bad'):8} "
                   f"{' '.join(f.name for f in case.files)}")
         print(f"\n{len(cases)} testcases")
         return

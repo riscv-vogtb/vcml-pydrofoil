@@ -73,7 +73,7 @@ podman run --rm --security-opt label=disable \
 ```
 
 
-## Juliet CWE457 suite
+## Juliet suite
 
 `tools/juliet/run_suite.sh` (in the repo root) builds each testcase into
 `app/juliet` and runs it on the VP. Every testcase yields two elfs, one for its
@@ -81,15 +81,24 @@ bad() half and one for its good() half, so a fault in one cannot keep the other
 from being observed; `--phase bad` builds only one of them. Building happens in
 a container, the VP runs on the host, so it needs podman either way.
 
+`--suite` picks the CWEs (see `SUITES` in `juliet_suite.py`), `--variants` the
+flow variants. CWE457 has a defensible expectation per testcase and is reported
+as PASS/FAIL; for the buffer CWEs it depends on the frame layout whether an
+out-of-bounds access lands on poisoned memory, so those are only observed and
+counted.
+
 ```bash
-./tools/juliet/run_suite.sh --list                # 560 testcases
-./tools/juliet/run_suite.sh --filter '*_01'       # one per category
-./tools/juliet/run_suite.sh                       # everything
+./tools/juliet/run_suite.sh --list --suite all     # every known testcase
+./tools/juliet/run_suite.sh --filter '*_01'        # one per category, CWE457
+./tools/juliet/run_suite.sh                        # all of CWE457
+./tools/juliet/run_suite.sh --suite cwe126,cwe127,cwe562 --variants 01-18
 ```
 
 Results land in `results/juliet`: `results.csv`, plus the elf, config and UART
-log of every testcase. A run rebuilds the `juliet-<board>` build directory from
-scratch; pass `--no-fresh` to keep it, at the risk of a stale CMake cache.
+log of every testcase. `--results <dir>` puts them elsewhere; a filtered rerun
+merges into the csv that is already there. A run rebuilds the `juliet-<board>`
+build directory from scratch; pass `--no-fresh` to keep it, at the risk of a
+stale CMake cache.
 
 ## Instructions for new apps
 
