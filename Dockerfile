@@ -38,6 +38,11 @@ ENV PYTHONPATH="/vcml-pydrofoil"
 #     tar -xjf ./artifact/pypy-pydrofoil-scripting-experimental.tar.bz2 \
 #        -C ./pypy-pydrofoil-scripting-experimental --strip-components=1
 
+# Debug (Default) wie bisher; fuer Performance-Messungen:
+#   podman build --build-arg CMAKE_BUILD_TYPE=Release -t vcml-pydrofoil:release .
+ARG CMAKE_BUILD_TYPE=Debug
+ENV CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+
 RUN chmod a+x build_sim.sh
 RUN ./build_sim.sh
 

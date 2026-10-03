@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# CMAKE_BUILD_TYPE waehlt den VP-Buildtyp (Default Debug, wie bisher).
+# Fuer Performance-Messungen: CMAKE_BUILD_TYPE=Release ./build_sim.sh
+
 
 #Generate C-based glue code that exposes python functions (gluecode.py code ends up in _pydrofoilcapi_cffi.c)
 #Compile the generated C glue code to an object file (_pydrofoilcapi_cffi.o)
@@ -19,6 +22,6 @@ cd build
 
 cmake ../sysc_vp \
     -DCMAKE_PREFIX_PATH="${SYSTEMC_HOME}" \
-    -DCMAKE_BUILD_TYPE=Debug
+    -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Debug}"
 
 make -j"$(nproc)"

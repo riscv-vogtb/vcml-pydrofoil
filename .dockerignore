@@ -5,3 +5,16 @@ juliet_test_suite/*
 results
 results/*
 *.tar.bz2
+results_new_build
+results_new_build/*
+old_build
+old_build/*
+old-pypy-pydrofoil-scripting-experimental
+old-pypy-pydrofoil-scripting-experimental/*
+pydrofoil-riscv-with-poison
+pydrofoil-riscv-without-poison
+thesis
+thesis/*
+*.zip
+.git
+.git/*

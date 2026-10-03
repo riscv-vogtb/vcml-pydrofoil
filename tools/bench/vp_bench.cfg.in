@@ -1,0 +1,29 @@
+### Benchmark-Konfiguration, erzeugt von tools/bench/bench.py ##############
+# Nicht von Hand aendern; Werte kommen aus der Kommandozeile von bench.py.
+system.name   = @NAME@
+system.config = ${cfg}
+
+system.throttle.rtf = 0
+
+# Fest fuer alle Laeufe einer Messreihe und mitprotokolliert (messplan.md §9.3).
+system.quantum = @QUANTUM@
+
+# Nur Haengeschutz: die Workloads beenden sich ueber das simdev-STOP-Register
+# (support/platform_vp.c), damit der VP seinen Performance-Block druckt.
+system.duration = @DURATION@
+
+system.clk_cpu.hz = 1000000000 # 1 GHz, 1 Instruktion = 1 Takt
+
+system.core.arch_name = "rv64"
+system.core.verbose   = false
+
+system.core.elf      = @ELF@
+system.core.pc       = 0x80000000
+system.loader.images = @ELF@
+
+# RAM und Shadow muessen gleich gross sein (Shadow = RAM + 0x40000000,
+# sysc_vp/include/system.h). crt.S legt 128 KiB Stack hinter _end.
+system.ram    = 0x80000000..@RAM_HI@
+system.shadow = 0xC0000000..@SHADOW_HI@
+
+system.term.backends = stdout
