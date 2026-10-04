@@ -23,11 +23,20 @@
 
 set -uo pipefail
 
+# Gesamter Rumpf in einem Block: bash liest ihn vor der Ausfuehrung komplett
+# ein. Ohne das liest eine laufende (z. B. mit --wait wartende) Instanz nach
+# einer Aenderung dieser Datei an der alten Byte-Position weiter und bricht
+# mit Syntaxfehler ab (so geschehen am 03.10.).
+{
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO" || exit 1
 BENCH=(python3.12 tools/bench/bench.py run)
 LOG=results/bench/run_all.log
 LOCK=results/bench/.run_all.lock
+
+# VP-Auswahl: speicherlastig, Nutzungskosten, rechenlastig, mpoison isoliert
+VP_MATCH='^(embench__(sglib-combined|slre|edn)|micro__frame_size__FRAME256)__'
 
 # Stufe -> Befehl. Reihenfolge = Standardreihenfolge.
 STAGE_NAMES=(count negctl timing-iss-O2 timing-csim-O2 timing-iss-O0 count-vp timing-vp)
@@ -43,12 +52,15 @@ declare -A STAGE_CMD=(
 	# Zwei-Punkt-Messung N/2N = 1e7/2e7 Instruktionen (messplan.md §9.1);
 	# kuerzestes Embench-ELF hat 3,2e7, 2N liegt also ueberall im Programm.
 	[timing-csim-O2]="${BENCH[*]} --path csim --mode twopoint --inst-limit 10000000 --suite embench --opt O2 --reps 3"
-	# Nicht in der Standardfolge: -O0 erst nach Sichtung der -O2-Ergebnisse
-	[timing-iss-O0]="${BENCH[*]} --path iss --mode timing --opt O0 --reps 5"
-	# VP: noch nicht kalibriert (Laufzeit pro Workload auf Pfad 2 offen),
-	# erst count-vp ansehen, dann timing-vp
-	[count-vp]="${BENCH[*]} --path vp --mode count --jobs 4 --suite embench --opt O2 --timeout 1800"
-	[timing-vp]="${BENCH[*]} --path vp --mode timing --suite embench --opt O2 --reps 3"
+	# -O0 abgespeckt (Entscheidung 04.10.): nur A/A2/Bo/Co. alt gegen opt ist
+	# bei -O2 belegt; die Instruktionszahlen von B/C bei -O0 liefert count.
+	# -O0 zeigt die Nutzungskosten (bei -O2 kaum mpoison in Embench). ~3 h.
+	[timing-iss-O0]="${BENCH[*]} --path iss --mode timing --opt O0 --reps 5 --config A --config A2 --config Bo --config Co"
+	# VP: ~2,3 MIPS (Probe md5sum B: 779 s gegen 17 s standalone), volle
+	# Embench-Reihe waere ~28 h. Daher Auswahl mit denselben ELFs/Faktoren wie
+	# Pfad 1 und 3 (Vergleichbarkeit), VP-A je ~1-2,5 min (messplan.md §12)
+	[count-vp]="${BENCH[*]} --path vp --mode count --jobs 4 --opt O2 --match ${VP_MATCH} --timeout 3600"
+	[timing-vp]="${BENCH[*]} --path vp --mode timing --opt O2 --match ${VP_MATCH} --reps 3 --timeout 3600"
 )
 
 usage() {
@@ -96,7 +108,12 @@ fi
 # Nur eine Instanz; auch ein von Hand gestartetes bench.py run blockiert,
 # weil parallele Laeufe die Zeitmessung verfaelschen.
 exec 9>"$LOCK"
-flock -n 9 || { echo "run_all.sh laeuft bereits ($LOCK)" >&2; exit 1; }
+if ((WAIT)); then
+	# mit --wait hinter einer laufenden Instanz einreihen
+	flock -n 9 || { echo "=== $(date -Is) warte auf laufendes run_all.sh"; flock 9; }
+else
+	flock -n 9 || { echo "run_all.sh laeuft bereits ($LOCK)" >&2; exit 1; }
+fi
 BUSY='^python[0-9.]* tools/bench/bench.py run'
 if ((WAIT)) && pgrep -u "$USER" -f "$BUSY" >/dev/null; then
 	echo "=== $(date -Is) warte auf laufendes bench.py run:"
@@ -122,3 +139,5 @@ for s in "${STAGES[@]}"; do
 	fi
 done
 echo "=== $(date -Is) alle Stufen fertig: ${STAGES[*]}"
+exit 0
+}

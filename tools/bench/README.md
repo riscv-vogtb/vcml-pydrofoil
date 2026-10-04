@@ -48,9 +48,10 @@ tail -f results/bench/run_all.log
 ```
 
 Standard: `count` → `negctl` → `timing-iss-O2` → `timing-csim-O2`. `timing-iss-O0`,
-`count-vp`, `timing-vp` nur auf Anfrage (O0 nach Sichtung von O2; VP noch nicht
-kalibriert). Jede Stufe ist fortsetzbar; nach Abbruch denselben Befehl erneut
-starten. Es läuft immer nur eine Instanz, und `run_all.sh` startet nicht, solange
+`count-vp`, `timing-vp` nur auf Anfrage (O0 abgespeckt: A/A2/Bo/Co; VP mit ~0,7–4 MIPS
+nur auf einer Auswahl von vier Workloads, `VP_MATCH` im Skript). Jede Stufe ist
+fortsetzbar; nach Abbruch denselben Befehl erneut starten. Es läuft immer nur eine
+Instanz (mit `--wait` reiht sich eine weitere dahinter ein), und `run_all.sh` startet nicht, solange
 ein anderer `bench.py run` aktiv ist (parallele Läufe verfälschen die Zeitmessung).
 Der Build ist keine Stufe: ein Neubau ändert die ELF-Hashes.
 
