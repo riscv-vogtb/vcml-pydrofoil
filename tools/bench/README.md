@@ -14,6 +14,7 @@ dort; hier steht nur, wie man es bedient.
 | `bench.py` | Runner: Messreihen planen, ausführen, fortsetzen, zusammenfassen |
 | `calibrate.py` | Skalierung pro Workload und opt aus einem count-Lauf (§9.1) |
 | `quickcompare.py` | Schnellvergleich Simulator-Varianten (alt/opt), keine Messreihe |
+| `analyze.py` | Auswertung aller Reihen → `thesis/auswertung.md` (nur Ergebnisdateien nötig) |
 | `vp_bench.cfg.in` | VP-Konfiguration, von `bench.py` pro ELF ausgefüllt |
 | `support/` | Messschicht (`bench.c`), Trap-Bericht, Plattformschicht (`platform.c`), Embench-Board |
 | `micro/` | Mikrobenchmarks (§6.1) |
